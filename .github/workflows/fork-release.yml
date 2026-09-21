@@ -7,21 +7,27 @@ name: Fork release
 # Deliberately separate from build.yml: that workflow also builds fifteen
 # HiddifyCli variants this fork has no use for, and leaving it untouched keeps
 # a later merge from upstream clean.
+#
+# Two triggers, and the tag one is not redundant. GitHub resolves
+# workflow_dispatch only from the default branch, so while this workflow lives
+# on a feature branch it cannot be dispatched at all; pushing a fork-v* tag is
+# what actually runs it. The prefix keeps it clear of release.yml, which claims
+# v[0-9]+.[0-9]+.[0-9]+ and would otherwise build all nineteen upstream targets
+# and publish a draft release beside ours.
 
 on:
+  push:
+    tags:
+      - 'fork-v*'
   workflow_dispatch:
     inputs:
       tag-name:
         description: 'Tag to publish the archives under'
         type: string
         required: true
-        default: 'v3.1.8-process-rules.1'
+        default: 'fork-v3.1.8-process-rules.1'
       publish:
         description: 'Create or update the GitHub release'
-        type: boolean
-        default: true
-      prerelease:
-        description: 'Mark the release as a prerelease'
         type: boolean
         default: true
 
@@ -117,8 +123,8 @@ jobs:
     name: Publish release
     needs: [build]
     # Runs even when a target failed, so a partial set is still publishable and
-    # the failure is visible rather than silently dropping every archive.
-    if: ${{ always() && inputs.publish }}
+    # the failure stays visible instead of dropping every archive.
+    if: ${{ always() && (github.event_name == 'push' || inputs.publish) }}
     permissions: write-all
     runs-on: ubuntu-latest
     steps:
@@ -137,9 +143,8 @@ jobs:
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag-name }}
-          target_commitish: ${{ github.sha }}
-          name: ${{ inputs.tag-name }}
-          prerelease: ${{ inputs.prerelease }}
+          tag_name: ${{ inputs.tag-name || github.ref_name }}
+          name: ${{ inputs.tag-name || github.ref_name }}
+          prerelease: true
           files: bin/*.tar.gz
           fail_on_unmatched_files: true
