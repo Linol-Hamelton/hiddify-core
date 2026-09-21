@@ -8,13 +8,15 @@ import (
 )
 
 type Rule struct {
-	RuleSetUrl string `json:"rule-set-url"`
-	Domains    string `json:"domains"`
-	IP         string `json:"ip"`
-	Port       string `json:"port"`
-	Network    string `json:"network"`
-	Protocol   string `json:"protocol"`
-	Outbound   string `json:"outbound"`
+	RuleSetUrl  string   `json:"rule-set-url"`
+	Domains     string   `json:"domains"`
+	IP          string   `json:"ip"`
+	Port        string   `json:"port"`
+	Network     string   `json:"network"`
+	Protocol    string   `json:"protocol"`
+	ProcessName []string `json:"process-name,omitempty"`
+	ProcessPath []string `json:"process-path,omitempty"`
+	Outbound    string   `json:"outbound"`
 }
 
 func (r *Rule) MakeRule() option.DefaultRule {
@@ -34,7 +36,24 @@ func (r *Rule) MakeRule() option.DefaultRule {
 	if len(r.Protocol) > 0 {
 		rule.Protocol = append(rule.Protocol, strings.Split(r.Protocol, ",")...)
 	}
+	if len(r.ProcessName) > 0 {
+		rule.ProcessName = append(rule.ProcessName, r.ProcessName...)
+	}
+	if len(r.ProcessPath) > 0 {
+		rule.ProcessPath = append(rule.ProcessPath, r.ProcessPath...)
+	}
 	return rule
+}
+
+// HasDomainRule reports whether the rule carries a domain match. MakeDNSRule
+// reads nothing but Domains, so a rule without one derives no usable DNS rule.
+func (r *Rule) HasDomainRule() bool {
+	return len(r.Domains) > 0
+}
+
+// HasProcessRule reports whether the rule matches on the local process.
+func (r *Rule) HasProcessRule() bool {
+	return len(r.ProcessName) > 0 || len(r.ProcessPath) > 0
 }
 
 func (r *Rule) MakeDNSRule() option.DefaultDNSRule {
