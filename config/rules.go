@@ -40,7 +40,7 @@ func (r *Rule) MakeRule() option.DefaultRule {
 		rule.ProcessName = append(rule.ProcessName, r.ProcessName...)
 	}
 	if len(r.ProcessPath) > 0 {
-		rule.ProcessPath = append(rule.ProcessPath, r.ProcessPath...)
+		rule.ProcessPath = append(rule.ProcessPath, expandProcessPaths(r.ProcessPath)...)
 	}
 	return rule
 }
