@@ -72,9 +72,12 @@ func BuildConfig(opt HiddifyOptions, input option.Options) (*option.Options, err
 	setLog(&options, &opt)
 	setInbound(&options, &opt)
 	setDns(&options, &opt)
-	setRoutingOptions(&options, &opt)
+	err := setRoutingOptions(&options, &opt)
+	if err != nil {
+		return nil, err
+	}
 	setFakeDns(&options, &opt)
-	err := setOutbounds(&options, &input, &opt)
+	err = setOutbounds(&options, &input, &opt)
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +467,7 @@ func setFakeDns(options *option.Options, opt *HiddifyOptions) {
 	}
 }
 
-func setRoutingOptions(options *option.Options, opt *HiddifyOptions) {
+func setRoutingOptions(options *option.Options, opt *HiddifyOptions) error {
 	dnsRules := []option.DefaultDNSRule{}
 	routeRules := []option.Rule{}
 	rulesets := []option.RuleSet{}
@@ -537,7 +540,14 @@ func setRoutingOptions(options *option.Options, opt *HiddifyOptions) {
 		)
 	}
 
+	findProcess := false
 	for _, rule := range opt.Rules {
+		if rule.HasProcessRule() {
+			if rule.HasDomainRule() {
+				return fmt.Errorf("routing rule %q matches a process and a domain at once; MakeDNSRule cannot express the process half, so the DNS rule would apply to every process", rule.Domains)
+			}
+			findProcess = true
+		}
 		routeRule := rule.MakeRule()
 		switch rule.Outbound {
 		case "bypass":
@@ -556,6 +566,13 @@ func setRoutingOptions(options *option.Options, opt *HiddifyOptions) {
 					DefaultOptions: routeRule,
 				},
 			)
+		}
+
+		if !rule.HasDomainRule() {
+			// MakeDNSRule reads Domains and nothing else. Without one there is
+			// nothing left to match on, and the derived rule would either be
+			// dropped by IsValid or, worse, answer every lookup.
+			continue
 		}
 
 		dnsRule := rule.MakeDNSRule()
@@ -728,6 +745,7 @@ func setRoutingOptions(options *option.Options, opt *HiddifyOptions) {
 		Final:               OutboundMainProxyTag,
 		AutoDetectInterface: true,
 		OverrideAndroidVPN:  true,
+		FindProcess:         findProcess,
 		RuleSet:             rulesets,
 		// GeoIP: &option.GeoIPOptions{
 		// 	Path: opt.GeoIPPath,
@@ -749,6 +767,8 @@ func setRoutingOptions(options *option.Options, opt *HiddifyOptions) {
 			}
 		}
 	}
+
+	return nil
 }
 
 func patchHiddifyWarpFromConfig(out option.Outbound, opt HiddifyOptions) option.Outbound {
