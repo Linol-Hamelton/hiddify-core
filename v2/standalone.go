@@ -167,14 +167,20 @@ func buildConfig(configContent string, options config.HiddifyOptions) (string, e
 	}
 
 	finalconfig.Log.Output = ""
-	finalconfig.Experimental.ClashAPI.ExternalUI = "webui"
-	if options.AllowConnectionFromLAN {
-		finalconfig.Experimental.ClashAPI.ExternalController = "0.0.0.0:6756"
-	} else {
-		finalconfig.Experimental.ClashAPI.ExternalController = "127.0.0.1:6756"
-	}
+	// setClashAPI only fills Experimental when the Clash API is enabled, so
+	// running with enable-clash-api false used to panic here rather than
+	// start. Honour the setting instead of forcing the API back on.
+	if finalconfig.Experimental != nil && finalconfig.Experimental.ClashAPI != nil {
+		clashAPI := finalconfig.Experimental.ClashAPI
+		clashAPI.ExternalUI = "webui"
+		if options.AllowConnectionFromLAN {
+			clashAPI.ExternalController = "0.0.0.0:6756"
+		} else {
+			clashAPI.ExternalController = "127.0.0.1:6756"
+		}
 
-	fmt.Printf("Open http://localhost:6756/ui/?secret=%s in your browser\n", finalconfig.Experimental.ClashAPI.Secret)
+		fmt.Printf("Open http://localhost:6756/ui/?secret=%s in your browser\n", clashAPI.Secret)
+	}
 
 	if err := Setup("./", "./", "./tmp", 0, false); err != nil {
 		return "", fmt.Errorf("failed to set up global configuration: %w", err)
