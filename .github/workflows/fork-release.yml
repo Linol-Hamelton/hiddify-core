@@ -1,0 +1,145 @@
+name: Fork release
+
+# Publishes the six archives the Hiddify app downloads, under the upstream
+# asset names, so that pointing the app at this fork is only a change of
+# core.version and CORE_URL in its Makefile.
+#
+# Deliberately separate from build.yml: that workflow also builds fifteen
+# HiddifyCli variants this fork has no use for, and leaving it untouched keeps
+# a later merge from upstream clean.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag-name:
+        description: 'Tag to publish the archives under'
+        type: string
+        required: true
+        default: 'v3.1.8-process-rules.1'
+      publish:
+        description: 'Create or update the GitHub release'
+        type: boolean
+        default: true
+      prerelease:
+        description: 'Mark the release as a prerelease'
+        type: boolean
+        default: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.job.name }}
+    permissions: write-all
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { name: 'hiddify-core-windows-amd64', os: 'ubuntu-latest', target: 'windows-amd64', aarch: 'x64' }
+          - { name: 'hiddify-core-linux-amd64', os: 'ubuntu-22.04', target: 'linux-amd64' }
+          - { name: 'hiddify-core-linux-arm64', os: 'ubuntu-22.04', target: 'linux-arm64' }
+          - { name: 'hiddify-core-macos-universal', os: 'macos-14', target: 'macos-universal' }
+          - { name: 'hiddify-core-android', os: 'ubuntu-latest', target: 'android' }
+          - { name: 'hiddify-core-ios', os: 'macos-14', target: 'ios' }
+
+    runs-on: ${{ matrix.job.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          check-latest: false
+
+      - name: Setup Java
+        if: startsWith(matrix.job.target, 'android')
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup NDK
+        if: startsWith(matrix.job.target, 'android')
+        uses: nttld/setup-ndk@v1.4.0
+        id: setup-ndk
+        with:
+          ndk-version: r26b
+          add-to-path: true
+          local-cache: false
+          link-to-sdk: true
+
+      - name: Setup MinGW
+        if: startsWith(matrix.job.target, 'windows')
+        uses: egor-tensin/setup-mingw@v2
+        with:
+          platform: ${{ matrix.job.aarch }}
+
+      # linux-arm64 is a fork addition: upstream ships no hiddify-core archive
+      # for it, so there is no cross toolchain already on the runner.
+      - name: Setup aarch64 cross toolchain
+        if: matrix.job.target == 'linux-arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Setup macOS
+        if: startsWith(matrix.job.target, 'macos') || startsWith(matrix.job.target, 'ios')
+        run: brew install create-dmg tree coreutils
+
+      - name: Build
+        run: make -j$(getconf _NPROCESSORS_ONLN) ${{ matrix.job.target }}
+
+      - name: Archive
+        working-directory: bin
+        run: |
+          set -eu
+          rm -f ./*.h ./*/*.h
+          files=$(ls | grep -E '^(libcore\.(dll|so|dylib|aar)|webui|Libcore\.xcframework|lib|HiddifyCli(\.exe)?)$')
+          echo "archiving: $files"
+          tar -czf '${{ matrix.job.name }}.tar.gz' $files
+          ls -l '${{ matrix.job.name }}.tar.gz'
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.job.name }}
+          path: bin/${{ matrix.job.name }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish release
+    needs: [build]
+    # Runs even when a target failed, so a partial set is still publishable and
+    # the failure is visible rather than silently dropping every archive.
+    if: ${{ always() && inputs.publish }}
+    permissions: write-all
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hiddify-core-*
+          merge-multiple: true
+          path: bin/
+
+      - name: List archives with sizes
+        working-directory: bin
+        run: |
+          ls -l
+          sha256sum *.tar.gz
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag-name }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ inputs.tag-name }}
+          prerelease: ${{ inputs.prerelease }}
+          files: bin/*.tar.gz
+          fail_on_unmatched_files: true

@@ -75,6 +75,16 @@ linux-amd64:
 	make webui
 
 
+linux-arm64:
+	mkdir -p $(BINDIR)/lib
+	env GOOS=linux GOARCH=arm64 CC=aarch64-linux-gnu-gcc $(GOBUILDLIB) -o $(BINDIR)/lib/$(LIBNAME).so ./custom
+	mkdir lib
+	cp $(BINDIR)/lib/$(LIBNAME).so ./lib/$(LIBNAME).so
+	env GOOS=linux GOARCH=arm64 CC=aarch64-linux-gnu-gcc CGO_LDFLAGS="./lib/$(LIBNAME).so" $(GOBUILDSRV) -o $(BINDIR)/$(CLINAME) ./cli/bydll
+	rm -rf ./lib
+	chmod +x $(BINDIR)/$(CLINAME)
+	make webui
+
 linux-custom:
 	mkdir -p $(BINDIR)/
 	#env GOARCH=mips $(GOBUILDSRV) -o $(BINDIR)/$(CLINAME) ./cli/
