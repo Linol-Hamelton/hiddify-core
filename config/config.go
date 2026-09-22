@@ -568,6 +568,36 @@ func setRoutingOptions(options *option.Options, opt *HiddifyOptions) error {
 			)
 		}
 
+		// A process routed out of the tunnel has to resolve names out of the
+		// tunnel as well. Without this, the route rule sends the process's
+		// sockets to bypass while its lookups still go to DNSRemoteTag,
+		// because the port-53 rule above catches every query before the
+		// per-app rules are reached and Final is DNSRemoteTag. The process
+		// then gets whatever the tunnel's resolver returns - which is the
+		// real address of a host that local DNS interception was supposed to
+		// redirect, so tools that work by mapping a hostname to a local
+		// listener are defeated by a bypass rule that looks correct.
+		//
+		// DNSLocalTag and not DNSDirectTag: DNSDirectTag is the configured
+		// direct resolver, an external server that cannot see a local
+		// mapping either. DNSLocalTag is "local", the system resolver, which
+		// is where hosts entries and local DNS services live.
+		//
+		// The fields come from routeRule so the DNS rule matches exactly the
+		// processes the route rule matches, Invert included, and so the
+		// paths are not expanded (and their diagnostics not printed) twice.
+		if rule.HasProcessRule() && rule.Outbound == "bypass" {
+			processDNSRule := option.DefaultDNSRule{
+				ProcessName: routeRule.ProcessName,
+				ProcessPath: routeRule.ProcessPath,
+				Invert:      routeRule.Invert,
+				Server:      DNSLocalTag,
+			}
+			if processDNSRule.IsValid() {
+				dnsRules = append(dnsRules, processDNSRule)
+			}
+		}
+
 		if !rule.HasDomainRule() {
 			// MakeDNSRule reads Domains and nothing else. Without one there is
 			// nothing left to match on, and the derived rule would either be

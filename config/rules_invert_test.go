@@ -106,15 +106,83 @@ func TestIncludeSelectionKeepsFinalOnTheProxy(t *testing.T) {
 	}
 }
 
-// An inverted process rule has no domain to match on, so it must contribute
-// nothing to DNS - the same guard the plain process rule already carries.
-func TestInvertedProcessRuleDerivesNoDNSRule(t *testing.T) {
+// Include mode carries the same rule through to DNS, inverted the same way:
+// everything that is not in the selection leaves the tunnel, so everything
+// that is not in the selection must resolve outside it too. Without this the
+// unselected processes would take their addresses from the tunnel's resolver
+// while their sockets went direct.
+func TestInvertedProcessRuleResolvesTheRestLocally(t *testing.T) {
 	base := HiddifyOptions{DNSOptions: DNSOptions{EnableDNSRouting: true}}
 	withInvert := base
 	withInvert.Rules = []Rule{{ProcessPath: []string{`C:\bin\curl.exe`}, Invert: true, Outbound: "bypass"}}
 
-	if got, want := routingOptions(t, withInvert).DNS.Rules, routingOptions(t, base).DNS.Rules; !reflect.DeepEqual(got, want) {
-		t.Errorf("DNS rules changed by an inverted process rule:\n got %#v\nwant %#v", got, want)
+	baseline := routingOptions(t, base)
+	got := routingOptions(t, withInvert)
+
+	var found int
+	for _, rule := range got.DNS.Rules {
+		if !reflect.DeepEqual([]string(rule.DefaultOptions.ProcessPath), []string{`C:\bin\curl.exe`}) {
+			continue
+		}
+		found++
+		if !rule.DefaultOptions.Invert {
+			t.Error("the DNS rule is not inverted; it would send the selection to the local resolver and leave everything else on the tunnel's - exactly backwards")
+		}
+		if rule.DefaultOptions.Server != DNSLocalTag {
+			t.Errorf("server = %q, want %q", rule.DefaultOptions.Server, DNSLocalTag)
+		}
+	}
+	if found != 1 {
+		t.Errorf("found %d inverted process DNS rules, want exactly 1", found)
+	}
+	if len(got.DNS.Rules) != len(baseline.DNS.Rules)+1 {
+		t.Errorf("inverted rule added %d DNS rules, want 1", len(got.DNS.Rules)-len(baseline.DNS.Rules))
+	}
+}
+
+// The DNS rule has to match the same processes as the route rule, or a
+// process could take its addresses from one side of the tunnel and its
+// sockets from the other.
+func TestProcessDNSRuleMirrorsTheRouteRule(t *testing.T) {
+	opt := HiddifyOptions{
+		DNSOptions: DNSOptions{EnableDNSRouting: true},
+		Rules: []Rule{{
+			ProcessName: []string{"curl.exe"},
+			ProcessPath: []string{`C:\bin\curl.exe`},
+			Invert:      true,
+			Outbound:    "bypass",
+		}},
+	}
+	options := routingOptions(t, opt)
+
+	var route *option.DefaultRule
+	for i, rule := range options.Route.Rules {
+		if len(rule.DefaultOptions.ProcessPath) > 0 {
+			route = &options.Route.Rules[i].DefaultOptions
+		}
+	}
+	if route == nil {
+		t.Fatal("no process route rule generated")
+	}
+
+	var matched bool
+	for _, rule := range options.DNS.Rules {
+		if rule.DefaultOptions.Server != DNSLocalTag {
+			continue
+		}
+		matched = true
+		if !reflect.DeepEqual(rule.DefaultOptions.ProcessPath, route.ProcessPath) {
+			t.Errorf("ProcessPath differs:\n dns %#v\nroute %#v", rule.DefaultOptions.ProcessPath, route.ProcessPath)
+		}
+		if !reflect.DeepEqual(rule.DefaultOptions.ProcessName, route.ProcessName) {
+			t.Errorf("ProcessName differs:\n dns %#v\nroute %#v", rule.DefaultOptions.ProcessName, route.ProcessName)
+		}
+		if rule.DefaultOptions.Invert != route.Invert {
+			t.Errorf("Invert differs: dns %v, route %v", rule.DefaultOptions.Invert, route.Invert)
+		}
+	}
+	if !matched {
+		t.Error("no local-resolver DNS rule generated for the bypassed processes")
 	}
 }
 

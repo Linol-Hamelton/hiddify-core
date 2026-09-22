@@ -115,7 +115,7 @@ func routingOptions(t *testing.T, opt HiddifyOptions) *option.Options {
 	return options
 }
 
-func TestProcessRuleRoutesWithoutDerivingDNSRule(t *testing.T) {
+func TestProcessRuleRoutesAndResolvesOutsideTheTunnel(t *testing.T) {
 	base := HiddifyOptions{DNSOptions: DNSOptions{EnableDNSRouting: true}}
 	withProcess := base
 	withProcess.Rules = []Rule{{ProcessPath: []string{`C:\bin\curl.exe`}, Outbound: "bypass"}}
@@ -137,9 +137,38 @@ func TestProcessRuleRoutesWithoutDerivingDNSRule(t *testing.T) {
 		t.Error("process rule missing from route rules")
 	}
 
-	// and contributes nothing at all to DNS.
-	if !reflect.DeepEqual(got.DNS.Rules, baseline.DNS.Rules) {
-		t.Errorf("DNS rules changed by a process rule:\n got %#v\nwant %#v", got.DNS.Rules, baseline.DNS.Rules)
+	// and takes its name resolution out of the tunnel with it. This test
+	// used to assert the opposite - that a process rule contributed nothing
+	// to DNS - which is what let a bypassed process keep resolving through
+	// DNSRemoteTag and defeated local DNS interception for it.
+	var dnsFound int
+	for _, rule := range got.DNS.Rules {
+		if !reflect.DeepEqual([]string(rule.DefaultOptions.ProcessPath), []string{`C:\bin\curl.exe`}) {
+			continue
+		}
+		dnsFound++
+		if rule.DefaultOptions.Server != DNSLocalTag {
+			t.Errorf("server = %q, want %q; an external resolver cannot see a local mapping either",
+				rule.DefaultOptions.Server, DNSLocalTag)
+		}
+	}
+	if dnsFound != 1 {
+		t.Errorf("found %d process DNS rules, want exactly 1", dnsFound)
+	}
+	if len(got.DNS.Rules) != len(baseline.DNS.Rules)+1 {
+		t.Errorf("process rule added %d DNS rules, want 1", len(got.DNS.Rules)-len(baseline.DNS.Rules))
+	}
+}
+
+// Only a bypassed process is redirected. A process sent to the proxy is
+// inside the tunnel, so it must keep resolving through the tunnel.
+func TestProxiedProcessRuleLeavesDNSAlone(t *testing.T) {
+	base := HiddifyOptions{DNSOptions: DNSOptions{EnableDNSRouting: true}}
+	withProcess := base
+	withProcess.Rules = []Rule{{ProcessPath: []string{`C:\bin\curl.exe`}, Outbound: "proxy"}}
+
+	if got, want := routingOptions(t, withProcess).DNS.Rules, routingOptions(t, base).DNS.Rules; !reflect.DeepEqual(got, want) {
+		t.Errorf("DNS rules changed by a proxied process rule:\n got %#v\nwant %#v", got, want)
 	}
 }
 
