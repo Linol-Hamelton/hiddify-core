@@ -16,7 +16,14 @@ type Rule struct {
 	Protocol    string   `json:"protocol"`
 	ProcessName []string `json:"process-name,omitempty"`
 	ProcessPath []string `json:"process-path,omitempty"`
-	Outbound    string   `json:"outbound"`
+	// Invert negates the whole match, so the rule fires for every connection
+	// the other fields do not describe. It is what an include selection needs:
+	// "everything that is not one of these processes leaves the tunnel", with
+	// the selected processes falling through to the final outbound. Expressing
+	// it this way keeps Route.Final on the proxy, so the DNS, LAN and
+	// platform rules that run before this one are untouched.
+	Invert   bool   `json:"invert,omitempty"`
+	Outbound string `json:"outbound"`
 }
 
 func (r *Rule) MakeRule() option.DefaultRule {
@@ -42,6 +49,11 @@ func (r *Rule) MakeRule() option.DefaultRule {
 	if len(r.ProcessPath) > 0 {
 		rule.ProcessPath = append(rule.ProcessPath, expandProcessPaths(r.ProcessPath)...)
 	}
+	// Set last and unconditionally: option.DefaultRule.IsValid ignores Invert
+	// when it decides whether a rule matches anything, so an inverted rule with
+	// an empty process list is dropped rather than turned into "invert nothing",
+	// which would match every connection and empty the tunnel.
+	rule.Invert = r.Invert
 	return rule
 }
 
